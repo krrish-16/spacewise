@@ -1,0 +1,28 @@
+{
+  "active_scenario": "battery_cascade",
+  "telemetry": {
+    "solar_power": {"voltage": 28.1, "status": "NOMINAL"},
+    "battery": {"level": 31.0, "status": "CRITICAL"},
+    "thermal": {"temp": 19.5, "status": "WATCH"},
+    "comms": {"signal": -64.6, "status": "WATCH"},
+    "propulsion": {"thrust": 13.8, "status": "CRITICAL"},
+    "payload": {"power": 117.0, "status": "NOMINAL"}
+  },
+  "graph_nodes": [
+    {"id": "battery", "status": "CRITICAL", "label": "Battery (Origin)", "delay": "T+0s"},
+    {"id": "thermal", "status": "WATCH", "label": "Thermal Control", "delay": "T+14s"},
+    {"id": "comms", "status": "WATCH", "label": "Communication", "delay": "T+35s"},
+    {"id": "propulsion", "status": "CRITICAL", "label": "Propulsion", "delay": "T+53s"}
+  ],
+  "collision_data": {
+    "imminent": true,
+    "distance_km": 1.8,
+    "time_to_impact_sec": 420,
+    "debris_id": "DEBRIS-4092"
+  },
+  "copilot_recommendation": {
+    "primary_action": "Power-Conservation Mode",
+    "survival_prob": 92,
+    "explanation": "Battery dropped 64% below nominal. Safest action is Power-Conservation Mode to protect the bus and maximize recovery margin."
+  }
+}
