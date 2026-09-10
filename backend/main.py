@@ -8,8 +8,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
-from debris_engine import advance_debris, check_debris, reset_debris, trigger_approach
+from debris_engine import (
+    advance_debris,
+    check_debris,
+    reset_debris,
+    trigger_approach,
+)
 from failure_engine import build_failure_state, get_failure_path
 from copilot_engine import generate_copilot_forecast
 
@@ -23,10 +29,12 @@ BASE_TELEMETRY = {
     "payload": {"power": 117.0, "status": "NOMINAL"},
 }
 
+
 SCENARIOS = {
     "battery_cascade": "battery",
     "solar_failure": "battery",
 }
+
 
 active_scenario = "battery_cascade"
 websocket_clients: set[WebSocket] = set()
@@ -35,13 +43,20 @@ websocket_clients: set[WebSocket] = set()
 def get_full_state() -> dict:
     collision = check_debris()
     graph_nodes = build_failure_state(SCENARIOS[active_scenario])
-    copilot = generate_copilot_forecast(collision, graph_nodes)
 
+    # Copy telemetry before sending it to the Copilot.
     telemetry = copy.deepcopy(BASE_TELEMETRY)
 
     # Small deterministic telemetry effects tied to the demo scenario.
     if collision["imminent"]:
         telemetry["propulsion"]["status"] = "CRITICAL"
+
+    # Copilot now receives collision + cascade + telemetry.
+    copilot = generate_copilot_forecast(
+        collision,
+        graph_nodes,
+        telemetry,
+    )
 
     return {
         "active_scenario": active_scenario,
@@ -54,7 +69,9 @@ def get_full_state() -> dict:
             "debris_id": collision["debris_id"],
         },
         "copilot_recommendation": copilot,
-        "failure_path": get_failure_path(SCENARIOS[active_scenario]),
+        "failure_path": get_failure_path(
+            SCENARIOS[active_scenario]
+        ),
     }
 
 
@@ -65,11 +82,19 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="SpaceWise Mission Control API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="SpaceWise Mission Control API",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,7 +103,10 @@ app.add_middleware(
 
 @app.get("/")
 def root():
-    return {"service": "SpaceWise", "status": "online"}
+    return {
+        "service": "SpaceWise",
+        "status": "online",
+    }
 
 
 @app.get("/api/state")
@@ -110,16 +138,45 @@ async def api_reset():
     return state
 
 
+class FailureInjectionRequest(BaseModel):
+    failure_type: str
+
+
+@app.post("/api/inject-failure")
+async def api_inject_failure(req: FailureInjectionRequest):
+    global active_scenario
+
+    ftype = req.failure_type
+
+    if ftype == "battery_runaway":
+        active_scenario = "battery_cascade"
+
+    elif ftype == "solar_strike":
+        trigger_approach()
+
+    elif ftype == "payload_overcurrent":
+        active_scenario = "solar_failure"
+
+    state = get_full_state()
+    await broadcast(state)
+
+    return state
+
+
 @app.post("/api/scenario/{scenario_name}")
 async def api_scenario(scenario_name: str):
     global active_scenario
 
     if scenario_name not in SCENARIOS:
-        return {"error": f"Unknown scenario: {scenario_name}"}
+        return {
+            "error": f"Unknown scenario: {scenario_name}"
+        }
 
     active_scenario = scenario_name
+
     state = get_full_state()
     await broadcast(state)
+
     return state
 
 
@@ -130,19 +187,24 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         await websocket.send_json(get_full_state())
+
         while True:
             await websocket.receive_text()
+
     except WebSocketDisconnect:
         websocket_clients.discard(websocket)
+
     except Exception:
         websocket_clients.discard(websocket)
 
 
 async def broadcast(state: dict):
     dead = []
+
     for client in websocket_clients:
         try:
             await client.send_json(state)
+
         except Exception:
             dead.append(client)
 
@@ -152,7 +214,12 @@ async def broadcast(state: dict):
 
 async def simulation_loop():
     """Slow background loop keeps the dashboard feeling live."""
+
     while True:
         await asyncio.sleep(5)
+
         advance_debris(20)
-        await broadcast(get_full_state())
+
+        await broadcast(
+            get_full_state()
+        )
